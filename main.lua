@@ -952,16 +952,18 @@ end
 -- and vary pitch+volume so each action feels distinct. Notification keeps
 -- its dedicated bell-like asset id.
 local SFX_PING = "rbxasset://sounds/electronicpingshort.wav"
+-- volumes scaled +25% from previous tuning. Roblox Sound.Volume can exceed 1.0
+-- (engine accepts up to 10) so pushing past 1 gives a real perceived loudness bump.
 local SFX = {
-    toggle_on  = {id = SFX_PING, vol = 0.85, pitch = 1.10},
-    toggle_off = {id = SFX_PING, vol = 0.80, pitch = 0.85},
-    click      = {id = SFX_PING, vol = 0.75, pitch = 1.45},
-    hover      = {id = SFX_PING, vol = 0.30, pitch = 1.80},
-    open       = {id = SFX_PING, vol = 1.00, pitch = 0.70},
-    close      = {id = SFX_PING, vol = 0.90, pitch = 0.60},
-    notify     = {id = 4590657391, vol = 0.85, pitch = 1.00},
-    error      = {id = SFX_PING, vol = 1.00, pitch = 0.55},
-    drag       = {id = SFX_PING, vol = 0.45, pitch = 1.30},
+    toggle_on  = {id = SFX_PING, vol = 1.06, pitch = 1.10},
+    toggle_off = {id = SFX_PING, vol = 1.00, pitch = 0.85},
+    click      = {id = SFX_PING, vol = 0.94, pitch = 1.45},
+    hover      = {id = SFX_PING, vol = 0.40, pitch = 1.80},
+    open       = {id = SFX_PING, vol = 1.25, pitch = 0.70},
+    close      = {id = SFX_PING, vol = 1.13, pitch = 0.60},
+    notify     = {id = 4590657391, vol = 1.06, pitch = 1.00},
+    error      = {id = SFX_PING, vol = 1.25, pitch = 0.55},
+    drag       = {id = SFX_PING, vol = 0.60, pitch = 1.30},
 }
 local function sfx(name)
     local s = SFX[name]
@@ -1147,7 +1149,7 @@ function Lib:MakeWindow(cfg)
     })
     crn(Hdr, 6)
     regBg(Hdr, "Header")
-    inst("Frame", {Parent = Hdr, Size = UDim2.new(1, 0, 0, 8), Position = UDim2.new(0, 0, 1, -8), BackgroundColor3 = T.Header, BorderSizePixel = 0, ZIndex = 8})
+    inst("Frame", {Parent = Hdr, Size = UDim2.new(1, 0, 0, 6), Position = UDim2.new(0, 0, 1, -6), BackgroundColor3 = T.Header, BorderSizePixel = 0, ZIndex = 8})
     -- three tiny dots instead of any line: discrete decoration, doesn't cut the layout
     local hDots = inst("Frame", {
         Parent = Hdr, AnchorPoint = Vector2.new(0.5, 1),
@@ -2534,7 +2536,7 @@ function Lib:MakeTab(name, icon)
         Visible = false,
         ZIndex = 3,
     })
-    pad(page, 10, 10, 8, 10)
+    pad(page, 8, 10, 8, 10)
 
     local cols = inst("Frame", {Parent = page, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 3})
     inst("UIListLayout", {
@@ -3930,7 +3932,7 @@ function AutoFarm:StartQTEAt(targetCFrame, token)
         returnBack = true,
         double = self.doubleTP,
         doubleDelay = self.doubleDelay,
-        decoy = true,
+        decoy = false,  -- decoy was the main source of the "after 3-4 digs char goes invisible / teleports back-and-forth" issue; removing it simplifies the lifecycle
         cameraMode = "hard",
         compensateMove = self.compensateMove,
         maxCompensate = self.maxCompensate,
@@ -3945,6 +3947,23 @@ function AutoFarm:StartQTEAt(targetCFrame, token)
     return data
 end
 
+-- Force-clears any leftover transparency from a glitched previous iteration
+-- so the character self-heals before each dig. Cheap (~10 parts) and robust.
+function AutoFarm:_ForceVisible()
+    local char = LP.Character
+    if not char then return end
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            if obj.LocalTransparencyModifier > 0 then
+                pcall(function() obj.LocalTransparencyModifier = 0 end)
+            end
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            -- decals don't generally need restoring (they have their own original transparency)
+            -- skip to avoid clobbering legitimate semi-transparent decals
+        end
+    end
+end
+
 function AutoFarm:OneDig(token)
     if self:IsStopped(token) then return false end
     if not self:InstallQTE() then
@@ -3952,6 +3971,9 @@ function AutoFarm:OneDig(token)
         return false
     end
     if self:IsStopped(token) then return false end
+    -- defensive: force character visible at the start of every iteration so any
+    -- accumulated bug state from a previous glitched dig self-heals
+    self:_ForceVisible()
     if not self:EnsureTool(token) then
         if self.debug then warn("[AutoFarm] equipment tool not found") end
         return false
@@ -4055,6 +4077,7 @@ function AutoFarm:Stop()
     end
     GhostTP.Restore()
     self:StopWalkGuard()
+    self:_ForceVisible()
 end
 
 function AutoFarm:Diag()
