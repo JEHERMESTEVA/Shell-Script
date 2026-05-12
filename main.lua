@@ -15,6 +15,8 @@ local RS  = game:GetService("RunService")
 local PL  = game:GetService("Players")
 local RPS = game:GetService("ReplicatedStorage")
 local HS  = game:GetService("HttpService")
+local TPS = game:GetService("TeleportService")
+local VU  = game:GetService("VirtualUser")
 local LP  = PL.LocalPlayer
 
 local gethui = type(gethui) == "function" and gethui or nil
@@ -554,12 +556,38 @@ local function ripple(p, col)
     task.delay(0.55, function() if c then c:Destroy() end end)
 end
 
+-- Smooth UI drag: instead of snapping the window to the cursor every frame,
+-- the actual Position lerps toward a "wanted" Position each Heartbeat. The
+-- wanted Position updates instantly with input, but the real Position trails
+-- with a small ease, producing a heavier, premium feel without input lag.
 local function mkdrag(handle, target)
-    local dn, ds, dp
+    local dn, ds, dp, wanted, smoothConn
+    local function stopSmooth()
+        if smoothConn then smoothConn:Disconnect(); smoothConn = nil end
+    end
+    local function startSmooth()
+        if smoothConn then return end
+        smoothConn = TrackConnection(RS.Heartbeat:Connect(function(dt)
+            if not IsAlive() or not target or not target.Parent then stopSmooth(); return end
+            if not wanted then return end
+            local cur = target.Position
+            local alpha = math.clamp(dt * 22, 0, 1)
+            local nx = cur.X.Offset + (wanted.X.Offset - cur.X.Offset) * alpha
+            local ny = cur.Y.Offset + (wanted.Y.Offset - cur.Y.Offset) * alpha
+            target.Position = UDim2.new(wanted.X.Scale, nx, wanted.Y.Scale, ny)
+            -- once close enough and drag finished, snap and stop the loop
+            if not dn and math.abs(wanted.X.Offset - nx) < 0.5 and math.abs(wanted.Y.Offset - ny) < 0.5 then
+                target.Position = wanted
+                stopSmooth()
+            end
+        end))
+    end
     handle.InputBegan:Connect(function(i)
         if not IsAlive() then return end
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
             dn = true; ds = i.Position; dp = target.Position
+            wanted = dp
+            startSmooth()
             local conn
             conn = i.Changed:Connect(function()
                 if i.UserInputState == Enum.UserInputState.End then
@@ -572,7 +600,7 @@ local function mkdrag(handle, target)
         if not IsAlive() then return end
         if dn and ds and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
             local d = i.Position - ds
-            target.Position = UDim2.new(dp.X.Scale, dp.X.Offset + d.X, dp.Y.Scale, dp.Y.Offset + d.Y)
+            wanted = UDim2.new(dp.X.Scale, dp.X.Offset + d.X, dp.Y.Scale, dp.Y.Offset + d.Y)
         end
     end))
     TrackConnection(UIS.InputEnded:Connect(function(i)
@@ -3709,10 +3737,11 @@ local AutoFarm = {
     spots = {
         {name = "Bay Island",        cf = CFrame.new(72.51, 26.46, 147.94)},
         {name = "Sea Stack Islands", cf = CFrame.new(888.92, 28.43, 1450.31)},
-        {name = "Sacred Mountain",   cf = CFrame.new(2633.38, 30.50, 399.93)},
+        {name = "Sacred Mountain",   cf = CFrame.new(3037.28, 259.76, 683.88)},
         {name = "Caldera Cay",       cf = CFrame.new(1657.74, 25.76, -1345.05)},
         {name = "Solmere",           cf = CFrame.new(-1481.39, 29.38, -1618.25)},
         {name = "Crescent Shore",    cf = CFrame.new(-1413.13, 30.76, 1519.42)},
+        {name = "Sky Island",        cf = CFrame.new(-44.50, 3136.75, 1291.99)},
     },
 }
 
@@ -5375,6 +5404,7 @@ local IslandTeleport = {
         {"Sacred Mountain", CFrame.new(2576.19, 38.18, 375.27)},
         {"Caldera cay", CFrame.new(1652.64, 40.58, -1303.60)},
         {"Solmere", CFrame.new(-1449.86, 34.97, -1591.46)},
+        {"Sky island", CFrame.new(-44.50, 3136.75, 1291.99)},
     },
 }
 
@@ -5414,6 +5444,8 @@ local ClawTeleport = {
         ["Solar Tideclaw"] = CFrame.new(1788.26880, 67.46360, -1619.34094, 0.90630, 0.42263, -0.00001, -0.00001, 0.00004, 1.00000, 0.42263, -0.90630, 0.00004),
         ["Sanctum Tideclaw"] = CFrame.new(2704.68359, 38.10104, 403.05029, 0.64282, 0.13298, 0.75439, 0.00002, 0.98481, -0.17362, -0.76602, 0.11163, 0.63305),
         ["Sunveil Tideclaw"] = CFrame.new(2774.13770, 70.00415, 482.68906, 0.64281, 0.06676, 0.76311, 0.00001, 0.99619, -0.08716, -0.76602, 0.05603, 0.64037),
+        ["Aether Tideclaw"] = CFrame.new(88.98, 3093.82, 1159.50),
+        ["Helios Sunspace"] = CFrame.new(97.76, 3093.50, 1145.19),
     },
 }
 
@@ -5615,7 +5647,9 @@ function MiscMovement:StartFly()
         end
         if dir.Magnitude > 0 then dir = dir.Unit end
         if hum then hum:ChangeState(Enum.HumanoidStateType.Freefall) end
-        hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity:Lerp(dir * self.flySpeed, math.clamp(dt * 12, 0, 1))
+        -- lerp factor bumped 4x (dt*12 → dt*48): reaches target velocity 4x faster
+        -- but still interpolated each frame, so motion stays smooth without jerks
+        hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity:Lerp(dir * self.flySpeed, math.clamp(dt * 48, 0, 1))
         hrp.AssemblyAngularVelocity = Vector3.zero
     end))
 end
@@ -5769,7 +5803,7 @@ miscMove:AddToggle("fly", false, function(v)
         MiscMovement:StopFly()
     end
 end, {keybind = "G"})
-miscMove:AddSlider("fly speed", 10, 350, 58, function(v)
+miscMove:AddSlider("fly speed", 10, 500, 58, function(v)
     MiscMovement:SetFlySpeed(v)
 end, {format = function(v) return ("%dst/s"):format(v) end})
 miscMove:AddToggle("speed", false, function(v)
@@ -5791,6 +5825,80 @@ miscMove:AddToggle("noclip", false, function(v)
 end, {keybind = "N"})
 local miscInfo = miscLeft:AddSection("info")
 miscInfo:AddLabel("movement controls are on the side")
+
+-- ── utility section: Anti AFK / Anti Gameplay Paused / Low Server TP / Rejoin ──
+-- Sourced from Electro Sailor Piece, adapted to Eminance runtime (Hub:Notify,
+-- TrackConnection, IsAlive guards) so shutdown/cleanup is clean.
+local _antiAfkConn
+local _antiPauseActive = false
+local miscUtil = miscLeft:AddSection("utility")
+
+miscUtil:AddToggle("anti afk", false, function(v)
+    if v then
+        if not _antiAfkConn then
+            _antiAfkConn = TrackConnection(LP.Idled:Connect(function()
+                if not IsAlive() then return end
+                pcall(function()
+                    local cam = workspace.CurrentCamera
+                    if not cam then return end
+                    VU:Button2Down(Vector2.new(0, 0), cam.CFrame)
+                    task.wait(1)
+                    VU:Button2Up(Vector2.new(0, 0), cam.CFrame)
+                end)
+            end))
+        end
+        Hub:Notify("misc", "anti-afk enabled", "success", 2)
+    else
+        if _antiAfkConn then _antiAfkConn:Disconnect(); _antiAfkConn = nil end
+        Hub:Notify("misc", "anti-afk disabled", "info", 2)
+    end
+end)
+
+miscUtil:AddToggle("anti gameplay paused", false, function(v)
+    _antiPauseActive = v
+    if not v then return end
+    Hub:Notify("misc", "anti gameplay paused on", "success", 2)
+    task.spawn(function()
+        while _antiPauseActive and IsAlive() do
+            pcall(function()
+                local pauseGui = game:GetService("CoreGui"):FindFirstChild("RobloxNetworkPauseNotification")
+                if pauseGui then pauseGui:Destroy() end
+            end)
+            task.wait(1)
+        end
+    end)
+end)
+
+miscUtil:AddButton("low server tp", function()
+    Hub:Notify("server", "searching emptiest server...", "info", 3)
+    local PlaceID = game.PlaceId
+    task.spawn(function()
+        local url = "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100"
+        local ok, result = pcall(function() return game:HttpGet(url) end)
+        if not ok then
+            Hub:Notify("server", "failed to fetch server list", "error", 3)
+            return
+        end
+        local okDecode, data = pcall(function() return HS:JSONDecode(result) end)
+        if not okDecode or type(data) ~= "table" or type(data.data) ~= "table" then
+            Hub:Notify("server", "bad server response", "error", 3)
+            return
+        end
+        for _, server in ipairs(data.data) do
+            if server.playing and server.playing > 0 and server.id ~= game.JobId then
+                Hub:Notify("server", "found — players: " .. tostring(server.playing), "success", 2)
+                pcall(function() TPS:TeleportToPlaceInstance(PlaceID, server.id, LP) end)
+                return
+            end
+        end
+        Hub:Notify("server", "no small servers found", "error", 3)
+    end)
+end)
+
+miscUtil:AddButton("rejoin", function()
+    Hub:Notify("server", "rejoining current server...", "info", 2)
+    pcall(function() TPS:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end)
+end)
 
 local Settings = Hub:MakeHiddenTab("UI Settings")
 local sL = Settings:Column()
